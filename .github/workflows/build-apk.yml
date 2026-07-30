@@ -8,42 +8,50 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-      
+
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
         node-version: '18'
-        
+
     - name: Install dependencies
       run: npm install
-      
+
     - name: Build web app
       run: npm run build
-      
+
     - name: Setup Java
       uses: actions/setup-java@v4
       with:
         java-version: '17'
         distribution: 'temurin'
-        
+
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
-      
+
     - name: Install Capacitor Android
       run: |
         npx cap add android
         npx cap sync
-        
+
+    - name: Add GPS Permissions to AndroidManifest
+      run: |
+        MANIFEST="android/app/src/main/AndroidManifest.xml"
+        # Tambah permission lokasi sebelum tag <application>
+        sed -i 's|<application|    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n    <uses-permission android:name="android.permission.CAMERA" />\n    <uses-feature android:name="android.hardware.camera" android:required="false" />\n\n    <application|' "$MANIFEST"
+        echo "AndroidManifest.xml updated:"
+        cat "$MANIFEST"
+
     - name: Build APK
       run: |
         cd android
         chmod +x gradlew
         ./gradlew assembleDebug
-        
+
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
