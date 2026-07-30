@@ -38,12 +38,14 @@ jobs:
         npx cap add android
         npx cap sync
 
-    - name: Add GPS Permissions to AndroidManifest
+    - name: Add Permissions to AndroidManifest
       run: |
         MANIFEST="android/app/src/main/AndroidManifest.xml"
-        # Tambah permission lokasi sebelum tag <application>
-        sed -i 's|<application|    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n    <uses-permission android:name="android.permission.CAMERA" />\n    <uses-feature android:name="android.hardware.camera" android:required="false" />\n\n    <application|' "$MANIFEST"
-        echo "AndroidManifest.xml updated:"
+        # Backup original
+        cp "$MANIFEST" "$MANIFEST.bak"
+        # Tambah permission sebelum <application>
+        sed -i 's|<application|    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n    <uses-permission android:name="android.permission.CAMERA" />\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />\n    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-feature android:name="android.hardware.camera" android:required="false" />\n    <uses-feature android:name="android.hardware.location" android:required="false" />\n\n    <application|' "$MANIFEST"
+        echo "=== AndroidManifest.xml updated ==="
         cat "$MANIFEST"
 
     - name: Build APK
