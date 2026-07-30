@@ -5,7 +5,7 @@ import { SplashScreen } from '@capacitor/splash-screen';
 import './style.css';
 
 // ===== KONFIGURASI BACKEND =====
-const API_BASE_URL = 'http://192.168.1.50:3000';
+const API_BASE_URL = 'http://192.168.1.106:3000';
 
 // ===== STATE =====
 let currentUser = null;
