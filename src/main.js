@@ -5,7 +5,7 @@ import { SplashScreen } from '@capacitor/splash-screen';
 import './style.css';
 
 // ===== KONFIGURASI BACKEND =====
-const API_BASE_URL = 'http://192.168.1.50:3000';  // Ganti jika server beda
+const API_BASE_URL = 'http://192.168.1.50:3000';
 
 // ===== STATE =====
 let currentUser = null;
@@ -14,7 +14,6 @@ let currentLocation = null;
 let todayAttendance = null;
 let historyData = [];
 let syncQueue = [];
-let isOnline = true;
 
 // ===== INIT =====
 document.addEventListener('DOMContentLoaded', async () => {
@@ -31,26 +30,10 @@ async function initApp() {
   if (saved) {
     currentUser = JSON.parse(saved);
     showHome();
-    // Coba sync data yang tertunda
-    attemptSync();
   } else {
     showLogin();
   }
 }
-
-// ===== NETWORK STATUS =====
-function checkOnline() {
-  return navigator.onLine;
-}
-
-window.addEventListener('online', () => {
-  isOnline = true;
-  attemptSync();
-});
-
-window.addEventListener('offline', () => {
-  isOnline = false;
-});
 
 // ===== SYNC QUEUE =====
 async function loadSyncQueue() {
@@ -67,60 +50,39 @@ async function addToSyncQueue(record) {
   await saveSyncQueue();
 }
 
-async function attemptSync() {
-  if (!checkOnline() || syncQueue.length === 0) return;
-
-  showToast('Menyinkronkan data ke server...', 'info');
-
-  const failed = [];
-  for (const record of syncQueue) {
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/attendance`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${await getToken()}`
-        },
-        body: JSON.stringify(record)
-      });
-      if (!res.ok) throw new Error('Sync failed');
-    } catch (e) {
-      failed.push(record);
-    }
-  }
-
-  syncQueue = failed;
-  await saveSyncQueue();
-
-  if (failed.length === 0) {
-    showToast('✅ Semua data berhasil disinkronkan!', 'success');
-  } else {
-    showToast(`⚠️ ${failed.length} data belum tersinkron. Akan dicoba lagi.`, 'warning');
-  }
-}
-
 // ===== AUTH =====
-async function getToken() {
-  const { value } = await Preferences.get({ key: 'token' });
-  return value || '';
-}
-
 async function loginToServer(email, password) {
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+
     const res = await fetch(`${API_BASE_URL}/api/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password })
+      body: JSON.stringify({ email, password }),
+      signal: controller.signal
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || 'Login gagal');
-    return data;
-  } catch (e) {
-    // Jika server mati, pakai mode offline (demo login)
-    if (!checkOnline()) {
-      return { offline: true, user: { name: email.split('@')[0], email } };
+
+    clearTimeout(timeout);
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || 'Login gagal');
     }
-    throw e;
+
+    return await res.json();
+  } catch (e) {
+    // Server tidak bisa diakses → mode offline
+    console.log('Server offline, using local mode:', e.message);
+    return { 
+      offline: true, 
+      token: 'offline-token',
+      user: { 
+        id: '1',
+        name: email.split('@')[0].charAt(0).toUpperCase() + email.split('@')[0].slice(1), 
+        email 
+      } 
+    };
   }
 }
 
@@ -157,28 +119,35 @@ async function handleLogin() {
   const email = document.getElementById('loginEmail').value.trim();
   const pass = document.getElementById('loginPass').value;
   const errorEl = document.getElementById('loginError');
+  const offlineEl = document.getElementById('offlineNotice');
 
   if (!email || !pass) { errorEl.textContent = 'Email dan password wajib diisi'; return; }
 
-  try {
-    const data = await loginToServer(email, pass);
+  errorEl.textContent = 'Memproses login...';
 
-    if (data.offline) {
-      document.getElementById('offlineNotice').style.display = 'block';
-      currentUser = { name: data.user.name, email: data.user.email, avatar: data.user.name.charAt(0).toUpperCase() };
-      await Preferences.set({ key: 'currentUser', value: JSON.stringify(currentUser) });
-      await Preferences.set({ key: 'token', value: 'offline-token' });
-      showHome();
-      showToast('Login mode offline. Data akan tersimpan di HP.', 'warning');
-    } else {
-      currentUser = { name: data.user.name, email: data.user.email, avatar: data.user.name.charAt(0).toUpperCase() };
-      await Preferences.set({ key: 'currentUser', value: JSON.stringify(currentUser) });
-      await Preferences.set({ key: 'token', value: data.token });
-      showHome();
-      showToast('Login berhasil!', 'success');
-    }
-  } catch (e) {
-    errorEl.textContent = e.message;
+  const data = await loginToServer(email, pass);
+
+  if (data.offline) {
+    offlineEl.style.display = 'block';
+    errorEl.textContent = '';
+  }
+
+  currentUser = {
+    id: data.user.id || '1',
+    name: data.user.name,
+    email: data.user.email,
+    avatar: data.user.name.charAt(0).toUpperCase()
+  };
+
+  await Preferences.set({ key: 'currentUser', value: JSON.stringify(currentUser) });
+  await Preferences.set({ key: 'token', value: data.token || 'offline-token' });
+
+  showHome();
+
+  if (data.offline) {
+    showToast('Login mode offline. Data tersimpan di HP.', 'warning');
+  } else {
+    showToast('Login berhasil!', 'success');
   }
 }
 
@@ -438,10 +407,7 @@ async function processCheckIn() {
   await addToSyncQueue(record);
 
   showStatus('statusMsg', `Absen masuk berhasil! ${dt.time}`, 'success');
-
-  // Coba sync jika online
-  if (checkOnline()) attemptSync();
-  else showToast('Data disimpan di HP. Akan dikirim saat WiFi tersedia.', 'warning');
+  showToast('Data tersimpan di HP. Akan dikirim saat server tersedia.', 'warning');
 
   setTimeout(() => showHome(), 1500);
 }
@@ -488,9 +454,7 @@ async function processCheckOut() {
   await addToSyncQueue(record);
 
   showStatus('statusMsg', `Absen pulang berhasil! ${dt.time}`, 'success');
-
-  if (checkOnline()) attemptSync();
-  else showToast('Data disimpan di HP. Akan dikirim saat WiFi tersedia.', 'warning');
+  showToast('Data tersimpan di HP. Akan dikirim saat server tersedia.', 'warning');
 
   setTimeout(() => showHome(), 1500);
 }
@@ -599,6 +563,54 @@ function showProfile() {
 function showSyncStatus() {
   const pending = syncQueue.length;
   alert(`Status Sinkronisasi\n\nData tersimpan di HP: ${historyData.length}\nBelum dikirim ke server: ${pending}\n\n${pending > 0 ? 'Data akan otomatis dikirim saat WiFi/server tersedia.' : 'Semua data sudah tersinkron!'}`);
+}
+
+async function attemptSync() {
+  if (syncQueue.length === 0) {
+    showToast('Tidak ada data yang perlu disinkronkan.', 'info');
+    return;
+  }
+
+  showToast('Menyinkronkan data ke server...', 'info');
+
+  const failed = [];
+  for (const record of syncQueue) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+
+      const res = await fetch(`${API_BASE_URL}/api/attendance`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${await getToken()}`
+        },
+        body: JSON.stringify(record),
+        signal: controller.signal
+      });
+
+      clearTimeout(timeout);
+
+      if (!res.ok) throw new Error('Sync failed');
+      record.synced = true;
+    } catch (e) {
+      failed.push(record);
+    }
+  }
+
+  syncQueue = failed;
+  await saveSyncQueue();
+
+  if (failed.length === 0) {
+    showToast('✅ Semua data berhasil disinkronkan!', 'success');
+  } else {
+    showToast(`⚠️ ${failed.length} data belum tersinkron. Server mungkin offline.`, 'warning');
+  }
+}
+
+async function getToken() {
+  const { value } = await Preferences.get({ key: 'token' });
+  return value || '';
 }
 
 function toggleSidebar() {
